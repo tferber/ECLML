@@ -1,0 +1,5 @@
+*.nc
+*.DS_store
+*.hdf5
+*.root
+*.pdf
