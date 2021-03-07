@@ -4,7 +4,8 @@ Graph Net clustering for the Belle II electromagnetic calorimeter.
 
 ### Usage
 
-`usage: gravnet_1.py [-h] [--batch-size BATCH_SIZE] [--epochs EPOCHS]
+```
+usage: gravnet_1.py [-h] [--batch-size BATCH_SIZE] [--epochs EPOCHS]
                     [--trainfrac TRAINFRAC] [--ncpu NCPU] [--seed SEED]
                     [--modeldir MODELDIR] [--inferonly] [--nsave NSAVE]
                     [--ninference NINFERENCE] [--inferencedir INFERENCEDIR]
@@ -37,5 +38,6 @@ optional arguments:
   --debug-test          print loss for every test batch
   --no-test             skip testing
   --print-model         print model
-  --use-cpu             do not use GPU even if it is available`
+  --use-cpu             do not use GPU even if it is available
+ ```
 

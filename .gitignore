@@ -3,3 +3,5 @@
 *.hdf5
 *.root
 *.pdf
+*.*~
+.ipynb_checkpoints
