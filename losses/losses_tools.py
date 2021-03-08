@@ -13,7 +13,7 @@ def energy_weighting(e, weight = 'sqrt'):
     return torch.where(e_in>0, e, torch.zeros_like(e))
 
 
-def create_loss_dict(batch, pred):
+def create_loss_dict(batch, pred, sort=True):
     
     '''    
     t_energysum (true energy per crystal summed over all particles): B x V x Fractions
@@ -22,12 +22,13 @@ def create_loss_dict(batch, pred):
     
     '''
 
-    r_energy = batch.x[:,2]
-    t_energy = batch.eik
-    t_sigfrac = batch.y
-    p_sigfrac = pred
+    r_energy = batch.x[:,2] # reconstructed crystal energy
+    t_energy = batch.eik # true energy
+    t_sigfrac = batch.y #true energy fraction
+    p_sigfrac = pred #predicted energy fraction
     
     return {'r_energy' : r_energy,
             't_energy' : t_energy,
             't_sigfrac' : t_sigfrac,
             'p_sigfrac' : p_sigfrac}
+

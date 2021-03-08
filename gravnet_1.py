@@ -111,9 +111,10 @@ def train(device, model, optimizer, loader, epoch, lrate, dict_train, debug=Fals
         optimizer.step()
         
         # metric calculation
-        metric_r, metric_a = clustermetric(batch, pred, 0.7, 1.2)
+        metric_r, metric_a1, metric_a2 = clustermetric(batch, pred, amin1=0.7, amax1=1.2, amin2=0.85, amax2=1.1)
         r_in_epoch = torch.cat((r_in_epoch, metric_r), 0)
-        a_in_epoch = torch.cat((a_in_epoch, metric_a), 0)
+        a1_in_epoch = torch.cat((a_in_epoch, metric_a1), 0)
+        a2_in_epoch = torch.cat((a_in_epoch, metric_a2), 0)
         
         if debug:
             print('train: batch: {}/{} -> loss: {:10.8f} (avg. loss per graph: {:10.8f})'.format(str(i).zfill(5), 
@@ -128,7 +129,8 @@ def train(device, model, optimizer, loader, epoch, lrate, dict_train, debug=Fals
     # get some values from metrics
     means = torch.mean(r_in_epoch, dim=0).detach().cpu().numpy()
     stds = torch.std(r_in_epoch, dim=0).detach().cpu().numpy()
-    a = (torch.sum(a_in_epoch, dim=0)/ngraphs_in_epoch).detach().cpu().numpy()
+    a1 = (torch.sum(a1_in_epoch, dim=0)/ngraphs_in_epoch).detach().cpu().numpy()
+    a2 = (torch.sum(a2_in_epoch, dim=0)/ngraphs_in_epoch).detach().cpu().numpy()
     
     # add to dict for later plotting
     dict_train[epoch] = [loss_in_epoch/ngraphs_in_epoch, 
@@ -137,7 +139,8 @@ def train(device, model, optimizer, loader, epoch, lrate, dict_train, debug=Fals
                          lrate, 
                          means, 
                          stds, 
-                         a]
+                         a1,
+                         a2]
 
 # ----------
 def test(device, model, loader, epoch, dict_test, debug=False):
@@ -163,9 +166,10 @@ def test(device, model, loader, epoch, dict_test, debug=False):
             ngraphs_in_epoch += batch.num_graphs
             
             # metric calculation
-            metric_r, metric_a = clustermetric(batch, pred, 0.7, 1.2)
+            metric_r, metric_a1, metric_a2 = clustermetric(batch, pred, amin1=0.7, amax1=1.2, amin2=0.85, amax2=1.1)
             r_in_epoch = torch.cat((r_in_epoch, metric_r), 0)
-            a_in_epoch = torch.cat((a_in_epoch, metric_a), 0)
+            a1_in_epoch = torch.cat((a_in_epoch, metric_a1), 0)
+            a2_in_epoch = torch.cat((a_in_epoch, metric_a2), 0)
                 
             if debug:
                 print('test: batch: {}/{}, loss:{:10.8f}'.format(str(i).zfill(5), nbatches, loss.item()), end="\r", flush=True)
@@ -173,7 +177,8 @@ def test(device, model, loader, epoch, dict_test, debug=False):
     # get some values from metrics
     means = torch.mean(r_in_epoch, dim=0).detach().cpu().numpy()
     stds = torch.std(r_in_epoch, dim=0).detach().cpu().numpy()
-    a = (torch.sum(a_in_epoch, dim=0)/ngraphs_in_epoch).detach().cpu().numpy()
+    a1 = (torch.sum(a1_in_epoch, dim=0)/ngraphs_in_epoch).detach().cpu().numpy()
+    a2 = (torch.sum(a2_in_epoch, dim=0)/ngraphs_in_epoch).detach().cpu().numpy()
         
     if debug:
         print()
@@ -184,7 +189,8 @@ def test(device, model, loader, epoch, dict_test, debug=False):
                         -1,
                         means, 
                         stds, 
-                        a]
+                        a1,
+                        a2]
 
 # ----------
 def infer(device, model, loader, outfile):
@@ -316,6 +322,8 @@ def main():
     parser.add_argument('--no-test', dest='no_test', default=False, action='store_true', help='skip testing')
     parser.add_argument('--print-model', dest='print_model', default=False, action='store_true', help='print model')
     parser.add_argument('--use-cpu', dest='use_cpu', default=False, action='store_true', help='do not use GPU even if it is available')
+    parser.add_argument('--lr', type=float, default=5e-3, help='learning rate')
+    parser.add_argument('--lrdecay', type=float, default=0.95, help='exponential decay of learning rate')
     args = parser.parse_args()
 
     # ----------------
@@ -381,12 +389,15 @@ def main():
     # --------------------- 
     # CREATE OPTIMIZER
     # ---------------------
-    optparams = {'lr': 5e-3}
+    print('learning rate: {}'.format(args.lr))
+    print('learning rate decay: {}'.format(args.lrdecay))
+    
+    optparams = {'lr': args.lr}
     optimizer = torch.optim.Adam(model.parameters(), 
                                  lr=optparams['lr'])
 
     # FIXME: Add second scheduler for stuck metric?
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, 0.99925, verbose=False)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.lrdecay, verbose=False)
     
     # --------------------- 
     dict_train = {}
@@ -445,15 +456,15 @@ def main():
             if not args.no_test:
                 print('    train time: {:10.4f}s, test time: {:10.4f}s'.format(dict_train[epoch][1]*dict_train[epoch][2], dict_test[epoch][1]*dict_test[epoch][2]))
                 print('    train loss (per graph): {:10.8f}, test loss (per graph): {:10.8f}'.format(dict_train[epoch][0], dict_test[epoch][0]))
-                print('    train metrics: k=1   mean = {:10.8f}, sigma = {:10.8f}, a = {:10.8f}'.format(dict_train[epoch][4][0], dict_train[epoch][5][0], dict_train[epoch][6][0]))
-                print('    train metrics: k=2   mean = {:10.8f}, sigma = {:10.8f}, a = {:10.8f}'.format(dict_train[epoch][4][1], dict_train[epoch][5][1], dict_train[epoch][6][1]))
-                print('    train metrics: k=bkg mean = {:10.8f}, sigma = {:10.8f}, a = {:10.8f}'.format(dict_train[epoch][4][2], dict_train[epoch][5][2], dict_train[epoch][6][2]))
+                print('    train metrics: k=1   mean = {:10.8f}, sigma = {:10.8f}, a1 = {:10.8f}'.format(dict_train[epoch][4][0], dict_train[epoch][5][0], dict_train[epoch][6][0]))
+                print('    train metrics: k=2   mean = {:10.8f}, sigma = {:10.8f}, a1 = {:10.8f}'.format(dict_train[epoch][4][1], dict_train[epoch][5][1], dict_train[epoch][6][1]))
+                print('    train metrics: k=bkg mean = {:10.8f}, sigma = {:10.8f}, a1 = {:10.8f}'.format(dict_train[epoch][4][2], dict_train[epoch][5][2], dict_train[epoch][6][2]))
             else: #no testing requested
                 print('    train time: {:10.4f}s'.format(dict_train[epoch][1]*dict_train[epoch][2]))
                 print('    train loss (per graph): {:10.8f}'.format(dict_train[epoch][0]))
-                print('    train metrics: k=1   mean = {:10.8f}, sigma = {:10.8f}, a = {:10.8f}'.format(dict_train[epoch][4][0], dict_train[epoch][5][0], dict_train[epoch][6][0]))
-                print('    train metrics: k=2   mean = {:10.8f}, sigma = {:10.8f}, a = {:10.8f}'.format(dict_train[epoch][4][1], dict_train[epoch][5][1], dict_train[epoch][6][1]))
-                print('    train metrics: k=bkg mean = {:10.8f}, sigma = {:10.8f}, a = {:10.8f}'.format(dict_train[epoch][4][2], dict_train[epoch][5][2], dict_train[epoch][6][2]))
+                print('    train metrics: k=1   mean = {:10.8f}, sigma = {:10.8f}, a1 = {:10.8f}'.format(dict_train[epoch][4][0], dict_train[epoch][5][0], dict_train[epoch][6][0]))
+                print('    train metrics: k=2   mean = {:10.8f}, sigma = {:10.8f}, a1 = {:10.8f}'.format(dict_train[epoch][4][1], dict_train[epoch][5][1], dict_train[epoch][6][1]))
+                print('    train metrics: k=bkg mean = {:10.8f}, sigma = {:10.8f}, a1 = {:10.8f}'.format(dict_train[epoch][4][2], dict_train[epoch][5][2], dict_train[epoch][6][2]))
 
 
             # save model

@@ -1,3 +1,7 @@
+**/__pycache__
+
+*.pt
+*.npy
 *.nc
 *.DS_store
 *.hdf5

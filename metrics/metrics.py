@@ -2,10 +2,10 @@ import torch
 from losses_tools import create_loss_dict
 from torch_geometric.nn import global_add_pool
 
-def clustermetric(batch, pred, amin=0.7, amax=1.2):
+def clustermetric(batch, pred, amin1=0.7, amax1=1.2, amin2=0.85, amax2=1.1):
     
     # need a dictionary as well
-    ldict = create_loss_dict(batch, pred)
+    ldict = create_loss_dict(batch, pred, sort=True)
     
     r_energy    = ldict['r_energy'] # (B x V) x T
     t_energy    = ldict['t_energy'] # (B x V) x T
@@ -21,6 +21,7 @@ def clustermetric(batch, pred, amin=0.7, amax=1.2):
     t_sum_k = global_add_pool(t_sum, batch.batch)
 
     r = torch.where(t_sum_k>0, p_sum_k/t_sum_k, torch.zeros_like(t_sum_k))    
-    a = ((r >= amin) & (r < amax)).sum(0).view(1,-1)
+    a1 = ((r >= amin1) & (r < amax1)).sum(0).view(1,-1)
+    a2 = ((r >= amin2) & (r < amax2)).sum(0).view(1,-1)
     
-    return r, a # dimension: B
+    return r, a1, a2 # dimension: B

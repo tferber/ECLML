@@ -118,7 +118,6 @@ class ECLDataset(InMemoryDataset):
             targets_zeroes = np.zeros_like(targets_e_prime)
             targets_t = np.divide(targets_e_prime, x, targets_zeroes, where=x>0)
 
-
             #monitoring (m)
             mon_uniqueid = h5f['mon_uniqueid'][:]
             mon_E0 = h5f['mon_E0'][:]
@@ -142,10 +141,17 @@ class ECLDataset(InMemoryDataset):
 
             for (n, x, y, eik, m, uid, cl) in zip(inputs_n, inputs, targets_t, targets_e, monitors, mon_uniqueid, coord_local):
                 # make variable length node lists - this is only for the multi-dimensional inputs
+                
                 x = x[:n[0],:] #inputs
-                y = y[:n[0],:] #targets
-                eik = eik[:n[0],:] #energies (for sqrt weights)
                 cl = cl[:n[0],:] #local coordinates
+
+                y = y[:n[0],:] #targets                  
+                eik = eik[:n[0],:] #energies (for sqrt weights)
+                
+                # sort targets by true phi
+                if m.squeeze()[5] > m.squeeze()[4] > 0:                    
+                    y[:,[0, 1]] = y[:,[1, 0]]
+                    eik[:,[0, 1]] = eik[:,[1, 0]]
                                 
                 data = Data(x=torch.from_numpy(x).to(torch.float), 
                             y=torch.from_numpy(y).to(torch.float))

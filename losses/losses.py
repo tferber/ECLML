@@ -1,5 +1,5 @@
 import torch
-from losses_tools import create_loss_dict, energy_weighting
+from losses_tools import create_loss_dict, energy_weighting #, sort_classes
 from torch_geometric.nn import global_add_pool
 
 def frac_loss(batch, pred, usesqrt=True):
@@ -9,7 +9,7 @@ def frac_loss(batch, pred, usesqrt=True):
     t_energy    = ldict['t_energy'] # (B x V) x T
     t_sigfrac   = ldict['t_sigfrac'] # (B x V) x T
     p_sigfrac   = ldict['p_sigfrac'] # (B x V) x T
-        
+            
     # true energy weight: t_i^true * E_i^true.
     # for the last entry (==background), this is the reconstructed digit energy
     w_energy =  energy_weighting(t_energy, weight='sqrt')
