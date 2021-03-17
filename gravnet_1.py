@@ -11,7 +11,7 @@ import numpy as np
 from datasets.datasets import ECLDataset
 from losses.losses import frac_loss
 from models.models import GravNet
-from metrics.metrics import clustermetric
+from metrics.metrics import clustermetric, clustermetric_true, clustermetric_baseline, clustermetric_pred
 
 # save models
 directory_base = './saved_model/'
@@ -91,7 +91,8 @@ def train(device, model, optimizer, loader, epoch, lrate, dict_train, debug=Fals
     ngraphs_in_epoch = 0
     nbatches = len(loader)
     r_in_epoch = torch.tensor(()).to(device)
-    a_in_epoch = torch.tensor(()).to(device)
+    a1_in_epoch = torch.tensor(()).to(device)
+    a2_in_epoch = torch.tensor(()).to(device)
    
     for i, batch in enumerate(loader):
                     
@@ -113,8 +114,8 @@ def train(device, model, optimizer, loader, epoch, lrate, dict_train, debug=Fals
         # metric calculation
         metric_r, metric_a1, metric_a2 = clustermetric(batch, pred, amin1=0.7, amax1=1.2, amin2=0.85, amax2=1.1)
         r_in_epoch = torch.cat((r_in_epoch, metric_r), 0)
-        a1_in_epoch = torch.cat((a_in_epoch, metric_a1), 0)
-        a2_in_epoch = torch.cat((a_in_epoch, metric_a2), 0)
+        a1_in_epoch = torch.cat((a1_in_epoch, metric_a1), 0)
+        a2_in_epoch = torch.cat((a2_in_epoch, metric_a2), 0)
         
         if debug:
             print('train: batch: {}/{} -> loss: {:10.8f} (avg. loss per graph: {:10.8f})'.format(str(i).zfill(5), 
@@ -151,7 +152,8 @@ def test(device, model, loader, epoch, dict_test, debug=False):
     ngraphs_in_epoch = 0
     nbatches = len(loader)
     r_in_epoch = torch.tensor(()).to(device)
-    a_in_epoch = torch.tensor(()).to(device)
+    a1_in_epoch = torch.tensor(()).to(device)
+    a2_in_epoch = torch.tensor(()).to(device)
    
     for i, batch in enumerate(loader):
     
@@ -168,8 +170,8 @@ def test(device, model, loader, epoch, dict_test, debug=False):
             # metric calculation
             metric_r, metric_a1, metric_a2 = clustermetric(batch, pred, amin1=0.7, amax1=1.2, amin2=0.85, amax2=1.1)
             r_in_epoch = torch.cat((r_in_epoch, metric_r), 0)
-            a1_in_epoch = torch.cat((a_in_epoch, metric_a1), 0)
-            a2_in_epoch = torch.cat((a_in_epoch, metric_a2), 0)
+            a1_in_epoch = torch.cat((a1_in_epoch, metric_a1), 0)
+            a2_in_epoch = torch.cat((a2_in_epoch, metric_a2), 0)
                 
             if debug:
                 print('test: batch: {}/{}, loss:{:10.8f}'.format(str(i).zfill(5), nbatches, loss.item()), end="\r", flush=True)
@@ -193,7 +195,78 @@ def test(device, model, loader, epoch, dict_test, debug=False):
                         a2]
 
 # ----------
-def infer(device, model, loader, outfile):
+def infermetric(device, model, loader, outfile, includeall=False):
+    model.eval()
+
+    list_t_sum = []
+    list_p_sum = []
+    list_r_sum = []
+    list_monitors = []
+    list_swap = []
+
+    for i, batch in enumerate(loader):
+        batch = batch.to(device)
+
+        with torch.no_grad():
+
+            pred = model(batch)
+
+            t_sum = clustermetric_true(batch, pred)
+            p_sum = clustermetric_pred(batch, pred)
+            r_sum = clustermetric_baseline(batch)
+            
+            #get the detailed loss per graph
+            loss_def = frac_loss(batch, pred, usesqrt=True, pernode=True)
+
+            # swap the prediction and the detailed loss for the swapped prediction
+            pred[:,[0,1]] = pred[:,[1,0]]
+            loss_swapped = frac_loss(batch, pred, usesqrt=True, pernode=True)
+            
+            # if the prediction for the other is better, swap them
+            swap = (loss_swapped[:,[0]] < loss_def[:,[0]]).squeeze()
+            p_sum[swap, 0:2] = torch.fliplr(p_sum[swap, 0:2])
+            list_swap.append(np.float32(swap.detach().cpu().numpy()))
+
+            list_t_sum.append(np.float32(t_sum.detach().cpu().numpy()))
+            list_p_sum.append(np.float32(p_sum.detach().cpu().numpy()))
+            list_r_sum.append(np.float32(r_sum.detach().cpu().numpy()))
+            list_monitors.append(np.float32(batch.monitor.detach().cpu().numpy()))
+            
+    hdf5file = 'tmp-xxx.hdf'
+    with h5py.File(hdf5file, 'w') as f:
+        arr_swap = np.concatenate((list_swap), axis=0)
+        f.create_dataset('swap', data=arr_swap)
+
+        arr_t_sum = np.concatenate((list_t_sum), axis=0)
+        arr_p_sum = np.concatenate((list_p_sum), axis=0)
+        arr_r_sum = np.concatenate((list_r_sum), axis=0)
+
+        f.create_dataset('t_sum', data=arr_t_sum)
+        f.create_dataset('p_sum', data=arr_p_sum)
+        f.create_dataset('r_sum', data=arr_r_sum)
+
+        arr_monitoring = np.concatenate(list_monitors, axis=0)
+        f.create_dataset('mon_E0', data=arr_monitoring[:,0])
+        f.create_dataset('mon_E1', data=arr_monitoring[:,1])
+        f.create_dataset('mon_theta0', data=arr_monitoring[:,2])
+        f.create_dataset('mon_theta1', data=arr_monitoring[:,3])
+        f.create_dataset('mon_phi0', data=arr_monitoring[:,4])
+        f.create_dataset('mon_phi1', data=arr_monitoring[:,5])
+        f.create_dataset('mon_angle', data=arr_monitoring[:,6])
+        f.create_dataset('mon_nshared', data=arr_monitoring[:,7])
+        f.create_dataset('mon_n0', data=arr_monitoring[:,8])
+        f.create_dataset('mon_n1', data=arr_monitoring[:,9])
+        f.create_dataset('mon_e0_sel', data=arr_monitoring[:,10])
+        f.create_dataset('mon_e1_sel', data=arr_monitoring[:,11])
+        f.create_dataset('mon_e0_tot', data=arr_monitoring[:,12])
+        f.create_dataset('mon_e1_tot', data=arr_monitoring[:,13])
+        f.create_dataset('mon_e0_overlap', data=arr_monitoring[:,14])
+        f.create_dataset('mon_e1_overlap', data=arr_monitoring[:,15])
+        
+    shutil.move(hdf5file, outfile)
+            
+
+def infer(device, model, loader, outfile, includeall=False):
     model.eval()
 
     list_phi = []
@@ -206,6 +279,16 @@ def infer(device, model, loader, outfile):
     list_p1 = []
     list_pbkg = []
     list_monitor = []
+    
+    list_clstw0 = []
+    list_clstw1 = []
+    list_clstid0 = []
+    list_clstid1 = []
+    list_time = []
+    list_psd = []
+    list_mass = []
+    list_failedfit = []
+    list_fittype = []
 
     pad = 100
 
@@ -222,6 +305,17 @@ def infer(device, model, loader, outfile):
             y_batch = to_dense_batch(batch.y, batch.batch)[0].detach().cpu().numpy()
             monitor = batch.monitor.detach().cpu().numpy()
             local_batch = to_dense_batch(batch.local, batch.batch)[0].detach().cpu().numpy()
+            
+            if includeall:
+                clstw0 = to_dense_batch(batch.clstw0, batch.batch)[0].detach().cpu().numpy()
+                clstw1 = to_dense_batch(batch.clstw1, batch.batch)[0].detach().cpu().numpy()
+                clstid0 = to_dense_batch(batch.clstid0, batch.batch)[0].detach().cpu().numpy()
+                clstid1 = to_dense_batch(batch.clstid1, batch.batch)[0].detach().cpu().numpy()
+                psd = to_dense_batch(batch.psd, batch.batch)[0].detach().cpu().numpy()
+                time = to_dense_batch(batch.time, batch.batch)[0].detach().cpu().numpy()
+                mass = to_dense_batch(batch.mass, batch.batch)[0].detach().cpu().numpy()
+                failedfit = to_dense_batch(batch.ff, batch.batch)[0].detach().cpu().numpy()
+                fittype = to_dense_batch(batch.ft, batch.batch)[0].detach().cpu().numpy()                
             
             for idx in range(pred_batch.shape[0]):
                 p0 = pred_batch[idx,:,0]
@@ -248,8 +342,33 @@ def infer(device, model, loader, outfile):
                 list_p1.append(np.float32(np.pad(p1, pad_width=(pad - len(p1)), mode='constant', constant_values=0.))[pad - len(p1):])
                 list_pbkg.append(np.float32(np.pad(pbkg, pad_width=(pad - len(pbkg)), mode='constant', constant_values=0.))[pad - len(pbkg):])
                 
+                if includeall:
+                    w0 = clstw0[idx].squeeze()
+                    w1 = clstw1[idx].squeeze()
+                    id0 = clstid0[idx].squeeze()
+                    id1 = clstid1[idx].squeeze()
+                    p = psd[idx].squeeze()
+                    t = time[idx].squeeze()
+                    m = mass[idx].squeeze()
+                    ff = failedfit[idx].squeeze()
+                    ft = fittype[idx].squeeze()
+                    
+                    list_clstw0.append(np.float32(np.pad(w0, pad_width=(pad - len(w0)), mode='constant', constant_values=0.))[pad - len(w0):])
+                    list_clstw1.append(np.float32(np.pad(w1, pad_width=(pad - len(w1)), mode='constant', constant_values=0.))[pad - len(w1):])
+                    list_clstid0.append(np.float32(np.pad(id0, pad_width=(pad - len(id0)), mode='constant', constant_values=0.))[pad - len(id0):])
+                    list_clstid1.append(np.float32(np.pad(id1, pad_width=(pad - len(id1)), mode='constant', constant_values=0.))[pad - len(id1):])
+                    list_psd.append(np.float32(np.pad(p, pad_width=(pad - len(p)), mode='constant', constant_values=0.))[pad - len(p):])
+                    list_time.append(np.float32(np.pad(t, pad_width=(pad - len(t)), mode='constant', constant_values=0.))[pad - len(t):])
+                    list_mass.append(np.float32(np.pad(m, pad_width=(pad - len(m)), mode='constant', constant_values=0.))[pad - len(m):])
+                    list_failedfit.append(np.float32(np.pad(ff, pad_width=(pad - len(ff)), mode='constant', constant_values=0.))[pad - len(ff):])
+                    list_fittype.append(np.float32(np.pad(ft, pad_width=(pad - len(ft)), mode='constant', constant_values=0.))[pad - len(ft):])
+
+                
             list_monitor.append(np.float32(monitor))
-            break
+            
+#             if not includeall: #only one batch for fast monitoring
+            if True: #only one batch for fast monitoring
+                break
             
     
     hdf5file = 'tmp-xxx.hdf'
@@ -274,6 +393,27 @@ def infer(device, model, loader, outfile):
         f.create_dataset('target_p0', data=arr_p0)
         f.create_dataset('target_p1', data=arr_p1)
         f.create_dataset('target_pbkg', data=arr_pbkg)
+        
+        if includeall:
+            arr_clstw0 = np.asmatrix(list_clstw0)
+            arr_clstw1 = np.asmatrix(list_clstw1)
+            arr_clstid0 = np.asmatrix(list_clstid0)
+            arr_clstid1 = np.asmatrix(list_clstid1)
+            arr_psd = np.asmatrix(list_psd)
+            arr_time = np.asmatrix(list_time)
+            arr_mass = np.asmatrix(list_mass)
+            arr_ff = np.asmatrix(list_failedfit)
+            arr_ft = np.asmatrix(list_fittype)
+            
+            f.create_dataset('clstw0', data=arr_clstw0)
+            f.create_dataset('clstw1', data=arr_clstw1)
+            f.create_dataset('clstid0', data=arr_clstid0)
+            f.create_dataset('clstid1', data=arr_clstid1)
+            f.create_dataset('psd', data=arr_psd)
+            f.create_dataset('time', data=arr_time)
+            f.create_dataset('mass', data=arr_mass)
+            f.create_dataset('failedfit', data=arr_ff)
+            f.create_dataset('fittype', data=arr_ft)
 
         arr_monitoring = np.asmatrix(np.concatenate(list_monitor, 0))
         f.create_dataset('mon_E0', data=arr_monitoring[:,0])
@@ -310,7 +450,7 @@ def main():
     parser.add_argument('--ncpu', type=int, default=1, help='how many CPUs are used in loaders (default: 1)')
     parser.add_argument('--seed', type=int, default=0, help='set random seed for all random generators')
     parser.add_argument('--modeldir', type=str, default=None, help='directory with pretrained model')
-    parser.add_argument('--inferonly', dest='inferonly', default=False, action='store_true', help='only run inference, no train or test.')
+    parser.add_argument('--inferenceonly', dest='inferenceonly', default=False, action='store_true', help='only run inference, no train or test.')
     parser.add_argument('--nsave', type=int, default=5, help='save model and status every nsave epochs')
     parser.add_argument('--ninference', type=int, default=10, help='save inference ntuples for one batch every ninference epochs')
     parser.add_argument('--inferencedir', type=str, default='.', help='directory to store inference ntuples for one batch')
@@ -326,6 +466,12 @@ def main():
     parser.add_argument('--lrdecay', type=float, default=0.95, help='exponential decay of learning rate')
     args = parser.parse_args()
 
+    # configuration
+    usemass = True
+    usetime = False
+    usepsd = False
+    maskfailedtimefits = True
+    
     # ----------------
     # set random seeds
     if args.seed > 0:
@@ -339,8 +485,8 @@ def main():
 
     # ----------------
     # get data
-    indir = '/pnfs/desy.de/belle/local/user/ferber/mc/training-ML-BGx1/pair_gammas-0.1-withsec-7961763531/output_0054255137/'
-    dataset = ECLDataset(root=indir, refresh=args.refresh, usetime=False, usemass=True, usepsd=False)
+    indir = '/pnfs/desy.de/belle/local/user/ferber/mc/training-ML-BGx1/pair_gammas-0.1-withsec-3434647037/output_7642092008/'
+    dataset = ECLDataset(root=indir, refresh=args.refresh, usetime=usetime, usemass=usemass, usepsd=usepsd, maskfailedtimefits=maskfailedtimefits)
     dataset = dataset.shuffle()
     
     ntrain = int(args.trainfrac * len(dataset))
@@ -391,10 +537,9 @@ def main():
     # ---------------------
     print('learning rate: {}'.format(args.lr))
     print('learning rate decay: {}'.format(args.lrdecay))
-    
+
     optparams = {'lr': args.lr}
-    optimizer = torch.optim.Adam(model.parameters(), 
-                                 lr=optparams['lr'])
+    optimizer = torch.optim.Adam(model.parameters(), lr=optparams['lr'])
 
     # FIXME: Add second scheduler for stuck metric?
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.lrdecay, verbose=False)
@@ -422,7 +567,7 @@ def main():
     # --------------------- 
     # TRAINING AND TESTING
     # ---------------------
-    if not args.inferonly:
+    if not args.inferenceonly:
         lastepoch = args.epochs + 1 + epoch_start
         for epoch in range(1 + epoch_start, lastepoch):
 
@@ -472,7 +617,7 @@ def main():
                 save_model(model, optimizer, dict_test, dict_train, epoch, lrate, targetdir)
                 
             # store inference ntuples
-            if epoch%(int(args.ninference))==0:
+            if args.ninference >0 and epoch%(int(args.ninference))==0:
                 # delete outfile if it exists        
                 outfile = os.path.join(args.inferencedir, 'inference-{}.hdf5'.format(str(epoch).zfill(5)))
                 try:
@@ -482,7 +627,7 @@ def main():
         
                 infer(device=device,
                       model=model,
-                      loader=train_loader,
+                      loader=test_loader,
                       outfile=outfile)
 
 
@@ -490,18 +635,33 @@ def main():
         save_model(model, optimizer, dict_test, dict_train, epoch, lrate, targetdir, final=True)
         
     else:
+        print('skipping training step, running inference only')
         # delete outfile if it exists        
-        outfile = os.path.join(args.inferencedir, 'inference.hdf5')
+        outfile_image = os.path.join(args.inferencedir, 'inference-image.hdf5')
+        outfile_summary = os.path.join(args.inferencedir, 'inference-summary.hdf5')
         try:
-            os.remove(outfile)
+            os.remove(outfile_image)
+            os.remove(outfile_summary)
         except OSError:
             pass
 
+        inference_dataset = ECLDataset(root=indir, name='all', refresh=args.refresh, usetime=usetime, usemass=usemass, usepsd=usepsd)
+        print('inference_dataset.num_features: ', inference_dataset.num_features)
+        inference_loader = DataLoader(inference_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.ncpu, drop_last=False)
+
+        # run inference on a single batch **all** variables for plotting
         infer(device=device,
               model=model,
-              loader=train_loader,
-              outfile=outfile)
+              loader=inference_loader,
+              outfile=outfile_image,
+              includeall=True)
 
+        # run inference on full dataset and store metric
+        infermetric(device=device,
+              model=model,
+              loader=inference_loader,
+              outfile=outfile_summary)
+        
 if __name__ == '__main__':
     main()
     

@@ -1,16 +1,15 @@
 import torch
 
-def energy_weighting(e, weight = 'sqrt'):
-    e_in = e
+def energy_weighting(e, usesqrt = True):
+#     e_in = e
     
-    if weight == 'sqrt':
+    if usesqrt:
         e = torch.sqrt(torch.abs(e) + torch.finfo(torch.float32).eps)
-    elif weight == 'square':
-        e = torch.square(torch.abs(e) + torch.finfo(torch.float32).eps)
     else:
         e = torch.abs(e) + torch.finfo(torch.float32).eps
         
-    return torch.where(e_in>0, e, torch.zeros_like(e))
+#     return torch.where(e_in>0, e, torch.zeros_like(e)) #this makes a problem is e_in is 0, it bypasses .eps
+    return e
 
 
 def create_loss_dict(batch, pred, sort=True):
