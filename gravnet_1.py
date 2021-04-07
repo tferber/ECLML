@@ -216,11 +216,11 @@ def infermetric(device, model, loader, outfile, includeall=False):
             r_sum = clustermetric_baseline(batch)
             
             #get the detailed loss per graph
-            loss_def = frac_loss(batch, pred, usesqrt=True, pernode=True)
+            loss_def = frac_loss(batch, pred, losspernode=True)
 
             # swap the prediction and the detailed loss for the swapped prediction
             pred[:,[0,1]] = pred[:,[1,0]]
-            loss_swapped = frac_loss(batch, pred, usesqrt=True, pernode=True)
+            loss_swapped = frac_loss(batch, pred, losspernode=True)
             
             # if the prediction for the other is better, swap them
             swap = (loss_swapped[:,[0]] < loss_def[:,[0]]).squeeze()
